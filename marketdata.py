@@ -2,7 +2,8 @@ import os
 import wget
 import zipfile
 import logging
-from datetime import datetime, timedelta
+import subprocess
+from datetime import datetime
 import pandas as pd
 
 class MarketData:
@@ -17,6 +18,7 @@ class MarketData:
             'MCX': 'MCX_symbols.txt'
         }
         self.LAST_UPDATE_FILE = os.path.join(self.FILES_DIR, "last_update.txt")
+        self.GIT_REPO_DIR = os.getcwd()  # Change this if needed
 
     def delete_old_files(self):
         """Deletes old symbol files before downloading new ones"""
@@ -29,11 +31,9 @@ class MarketData:
 
     def download_symbol_files(self):
         """Downloads and extracts updated symbol files"""
-        # Check if update is needed
-
         logging.info("Downloading updated symbol files...")
         self.delete_old_files()  # Ensure fresh data daily
-        
+
         for exchange, filename in self.SYMBOL_FILES.items():
             zip_filename = f"{filename}.zip"
             file_path = os.path.join(self.FILES_DIR, filename)
@@ -46,11 +46,10 @@ class MarketData:
                 logging.info(f"Downloaded and extracted {exchange} symbols.")
             except Exception as e:
                 logging.error(f"Error downloading/extracting {exchange} symbols: {e}")
-        
+
         # Record the update time after successful download
-
-
-  
+        with open(self.LAST_UPDATE_FILE, "w") as f:
+            f.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     def load_exchange_data(self):
         """Load exchange data from downloaded symbol files"""
@@ -68,8 +67,20 @@ class MarketData:
             print(f"Error loading exchange data: {e}")
             raise
 
+    def update_github_repo(self):
+        """Commits and pushes updated files to GitHub"""
+        try:
+            os.chdir(self.GIT_REPO_DIR)
+            subprocess.run(["git", "add", "."], check=True)
+            subprocess.run(["git", "commit", "-m", f"Update symbol files - {datetime.now().strftime('%Y-%m-%d')}"], check=True)
+            subprocess.run(["git", "push"], check=True)
+            logging.info("Successfully pushed updates to GitHub.")
+        except subprocess.CalledProcessError as e:
+            logging.error(f"Error updating GitHub: {e}")
+
 # Example usage
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     market_data = MarketData()
     market_data.download_symbol_files()
+    market_data.update_github_repo()
