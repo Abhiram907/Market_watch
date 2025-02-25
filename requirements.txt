@@ -1,0 +1,11 @@
+./dist/NorenRestApi-0.0.30-py2.py3-none-any.whl
+pyotp
+pandas
+IPython
+websocket-client
+requests
+pytz
+streamlit
+datetime
+wget
+streamlit-autorefresh
