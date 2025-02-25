@@ -23,7 +23,7 @@ jobs:
           pip install pandas wget
 
       - name: Run market data update script
-        run: python market_data.py
+        run: python marketdata.py
 
       - name: Configure Git
         run: |
