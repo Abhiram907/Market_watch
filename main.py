@@ -217,8 +217,36 @@ class StreamlitUI:
     def display_data(self):
         # Move the display above the tabs
         st.subheader("Current Entries")
+        
+        # Create a styled dataframe
+        def color_pnl(val):
+            try:
+                val = float(val)
+                if val < 0:
+                    return 'color: red'
+                elif val > 0:
+                    return 'color: green'
+                return ''  # No color for zero values
+            except:
+                return ''  # No color for non-numeric values
+        
+        # Format numeric columns to 2 decimal places and apply P&L coloring
+        styled_df = st.session_state.data.style\
+            .format({
+                'LTP': '{:.2f}',
+                'HIGH': '{:.2f}',
+                'LOW': '{:.2f}',
+                'PCECLOSE': '{:.2f}',
+                'ENTRY': '{:.2f}',
+                'P&L': '{:.2f}',
+                'TGT': '{:.2f}',
+                'SL': '{:.2f}',
+                'STRIKE': '{:.2f}'
+            })\
+            .map(color_pnl, subset=['P&L'])
+        
         st.dataframe(
-            st.session_state.data,
+            styled_df,
             use_container_width=True,
             hide_index=True
         )
@@ -233,12 +261,20 @@ class StreamlitUI:
 
     def process_row(self, row, index):
         try:
+            # Check if this row is already stopped
+            if index in self.stopped_rows:
+                print(f"Row {index} is already stopped, returning stored values")
+                return self.stopped_rows[index]
+
             now = datetime.now(ist)
             
             # Get the essential values with proper type conversion
-            entry_price = float(row["ENTRY"])  # Changed from row.get() to direct access
-            quantity = int(row["QUANTITY"])    # Changed from row.get() to direct access
+            entry_price = float(row["ENTRY"])
+            quantity = int(row["QUANTITY"])
             buy_sell = str(row["BUY / SELL"]).strip().upper()
+            # Only set target/stop-loss if they are greater than 0
+            target = float(row["TGT"]) if row["TGT"] and float(row["TGT"]) > 0 else None
+            stop_loss = float(row["SL"]) if row["SL"] and float(row["SL"]) > 0 else None
             
             # Get scrip and fetch live data
             scrip = get_scrip(
@@ -251,61 +287,79 @@ class StreamlitUI:
             )
             
             if not scrip:
-                return {
-                    "Date/Time": now.strftime("%Y-%m-%d %H:%M:%S"),
-                    "LTP": 0,
-                    "HIGH": 0,
-                    "LOW": 0,
-                    "PCECLOSE": 0,
-                    "ENTRY": entry_price,
-                    "QUANTITY": quantity,
-                    "P&L": 0
-                }
+                return self.get_default_result(now, entry_price, quantity)
 
             token = scrip.split("|")[-1]
             live_data = fetch_live_data(token, row["EXCH"])
             
             if not live_data:
-                return {
-                    "Date/Time": now.strftime("%Y-%m-%d %H:%M:%S"),
-                    "LTP": 0,
-                    "HIGH": 0,
-                    "LOW": 0,
-                    "PCECLOSE": 0,
-                    "ENTRY": entry_price,
-                    "QUANTITY": quantity,
-                    "P&L": 0
-                }
+                return self.get_default_result(now, entry_price, quantity)
 
             LTP = float(live_data["LTP"])
             
-            # Calculate P&L
-            if entry_price > 0 and LTP > 0 and quantity > 0:
+            # Calculate P&L if we have valid entry price
+            if LTP > 0 and entry_price > 0:
                 if buy_sell == "BUY":
                     pnl = round((LTP - entry_price) * quantity, 2)
                 else:  # SELL
-                    pnl = round((entry_price - LTP) * quantity, 2)  
+                    pnl = round((entry_price - LTP) * quantity, 2)
             else:
                 pnl = 0
 
-            return {
-                "Date/Time": now.strftime("%Y-%m-%d %H:%M:%S"),
-                "LTP": LTP,
-                "HIGH": live_data["HIGH"],
-                "LOW": live_data["LOW"],
-                "PCECLOSE": live_data["PCECLOSE"],
-                "ENTRY": entry_price,
-                "QUANTITY": quantity,
-                "P&L": pnl
-            }
+            # Check target/stop-loss conditions regardless of entry price
+            if LTP > 0:  # Only need valid LTP to check targets
+                if buy_sell == "BUY":
+                    if (target is not None and LTP >= target) or (stop_loss is not None and LTP <= stop_loss):
+                        print(f"Row {index}: BUY {'Target' if target and LTP >= target else 'Stop-loss'} hit - LTP: {LTP}")
+                        result = self.create_result(now, live_data, entry_price, quantity, pnl, LTP)
+                        self.stopped_rows[index] = result
+                        return result
+                else:  # SELL
+                    if (target is not None and LTP <= target) or (stop_loss is not None and LTP >= stop_loss):
+                        print(f"Row {index}: SELL {'Target' if target and LTP <= target else 'Stop-loss'} hit - LTP: {LTP}")
+                        result = self.create_result(now, live_data, entry_price, quantity, pnl, LTP)
+                        self.stopped_rows[index] = result
+                        return result
+
+            return self.create_result(now, live_data, entry_price, quantity, pnl, LTP)
 
         except Exception as e:
             print(f"Error processing row {index}: {e}")
             return None
 
+    def get_default_result(self, now, entry_price, quantity):
+        return {
+            "Date/Time": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "LTP": 0,
+            "HIGH": 0,
+            "LOW": 0,
+            "PCECLOSE": 0,
+            "ENTRY": entry_price,
+            "QUANTITY": quantity,
+            "P&L": 0
+        }
+
+    def create_result(self, now, live_data, entry_price, quantity, pnl, LTP):
+        return {
+            "Date/Time": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "LTP": LTP,
+            "HIGH": live_data["HIGH"],
+            "LOW": live_data["LOW"],
+            "PCECLOSE": live_data["PCECLOSE"],
+            "ENTRY": entry_price,
+            "QUANTITY": quantity,
+            "P&L": pnl
+        }
+
     def update_row_form(self, row_index):
         with st.form("update_stock_form"):
             row_data = st.session_state.data.iloc[row_index]
+            
+            # Add delete button at the top
+            cols_top = st.columns([8, 2])  # 80-20 split for layout
+            with cols_top[1]:
+                delete_row = st.form_submit_button("🗑️ Delete Row", type="primary", use_container_width=True)
+            
             cols = st.columns([2, 2, 2, 2, 2, 2, 2])
             
             # First row of inputs
@@ -337,7 +391,15 @@ class StreamlitUI:
             entry = cols2[2].number_input("Entry Price", min_value=0.0, value=float(row_data["ENTRY"]))
             quantity = cols2[3].number_input("Quantity", min_value=1, value=int(row_data["QUANTITY"]), step=1)
             
-            if st.form_submit_button("Update Stock"):
+            update_stock = st.form_submit_button("Update Stock")
+            
+            if delete_row:
+                # Remove the row from the DataFrame
+                st.session_state.data = st.session_state.data.drop(index=row_index).reset_index(drop=True)
+                st.success("Row deleted successfully!")
+                st.rerun()  # Rerun the app to refresh the UI
+                
+            if update_stock:
                 updated_data = {
                     "SEGMENT": segment,
                     "SCRIPT / STOCK": script_stock,
@@ -420,6 +482,18 @@ def get_scrip(segment, exchange, symbol, expiry=None, otype=None, strike=None):
         print(f"Error getting scrip: {e}")
         return None
 
+@st.cache_data
+def get_token(exchange, scrip):
+    try:
+        df = exchange_dfs.get(exchange.upper())
+        if df is not None:
+            tokens = df[df['TradingSymbol'] == scrip]['Token'].values
+            return int(tokens[0]) if len(tokens) > 0 else None
+    except Exception as e:
+        print(f"Error fetching token for {scrip}: {e}")
+    return None
+
+@st.cache_data
 def fetch_live_data(token, exchange):
     try:
         token = int(token)
@@ -442,16 +516,6 @@ def fetch_live_data(token, exchange):
     except Exception as e:
         print(f"Error fetching live data for token {token}: {e}")
         return None
-
-def get_token(exchange, scrip):
-    try:
-        df = exchange_dfs.get(exchange.upper())
-        if df is not None:
-            tokens = df[df['TradingSymbol'] == scrip]['Token'].values
-            return int(tokens[0]) if len(tokens) > 0 else None
-    except Exception as e:
-        print(f"Error fetching token for {scrip}: {e}")
-    return None
 
 def main():
     ui = StreamlitUI()
