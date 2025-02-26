@@ -12,6 +12,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false  # Disable default GitHub Actions bot
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -31,7 +33,9 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Commit and push updates
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}  # Securely reference the PAT
         run: |
           git add .
-          git commit -m "Automated market data update - $(date)"
-          git push
+          git commit -m "Automated market data update - $(date)" || exit 0
+          git push https://Abhiram907:${GH_PAT}@github.com/Abhiram907/Market_watch.git main
