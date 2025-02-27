@@ -493,7 +493,6 @@ def get_token(exchange, scrip):
         print(f"Error fetching token for {scrip}: {e}")
     return None
 
-@st.cache_data
 def fetch_live_data(token, exchange):
     try:
         token = int(token)
