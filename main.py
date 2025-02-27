@@ -96,13 +96,13 @@ class StreamlitUI:
         self.stopped_rows = {}
         self.market_data = market_data  # Use the cached instance
         self.setup_streamlit()
-        
+
     def setup_streamlit(self):
         st.title("Market Data Monitor")
-        
+
         # Auto refresh every 1 second (1000 milliseconds)
         st_autorefresh(interval=1000, key="datarefresh")
-        
+
         # Initialize session state for storing data with explicit dtypes
         if 'data' not in st.session_state:
             st.session_state.data = pd.DataFrame({
@@ -121,21 +121,21 @@ class StreamlitUI:
                 "LOW": pd.Series(dtype='float64'),
                 "PCECLOSE": pd.Series(dtype='float64'),
                 "ENTRY": pd.Series(dtype='float64'),
-                "P&L": pd.Series(dtype='float64'),
+                "P &L": pd.Series(dtype='float64'),
                 "Date/Time": pd.Series(dtype='str')
             })
-        
+
         # Add tabs for Add/Update operations
         tab1, tab2 = st.tabs(["Add New Entry", "Update Existing Entry"])
-        
+
         with tab1:
             self.add_new_row()
-            
+
         with tab2:
             if not st.session_state.data.empty:
                 # Create a list of row descriptions for the dropdown
-                row_options = [f"Row {i+1}: {row['SCRIPT / STOCK']} - {row['SEGMENT']} - {row['EXCH']}" 
-                             for i, row in st.session_state.data.iterrows()]
+                row_options = [f"Row {i+1}: {row['SCRIPT / STOCK']} - {row['SEGMENT']} - {row['EXCH']}"
+                               for i, row in st.session_state.data.iterrows()]
                 selected_row = st.selectbox("Select row to update:", row_options)
                 if selected_row:
                     # Extract row index from selection
@@ -144,224 +144,114 @@ class StreamlitUI:
             else:
                 st.info("No entries to update. Add some entries first.")
 
-    def add_new_row(self):
-        with st.form("new_stock_form"):
-            cols = st.columns([2, 2, 2, 2, 2, 2, 2])
-            
-            # First row of inputs
-            segment = cols[0].selectbox("Segment", ["CASH", "FUTURES", "OPTIONS"], key="segment")
-            script_stock = cols[1].text_input("Script/Stock")
-            exch = cols[2].selectbox("Exchange", ["NSE", "BSE", "NFO", "BFO", "CDS", "MCX"])
-            expiry = cols[3].date_input("Expiry", value=None)
-            otype = cols[4].selectbox("Option Type", ["None", "CE", "PE"])
-            strike = cols[5].number_input("Strike Price", min_value=0.0)
-            buy_sell = cols[6].selectbox("Buy/Sell", ["BUY", "SELL"])
-            
-            # Second row of inputs
-            cols2 = st.columns([4, 4, 4, 4])
-            tgt = cols2[0].number_input("Target", min_value=0.0)
-            sl = cols2[1].number_input("Stop Loss", min_value=0.0)
-            entry = cols2[2].number_input("Entry Price", min_value=0.0)
-            quantity = cols2[3].number_input("Quantity", min_value=1, value=1, step=1)
-            
-            if st.form_submit_button("Add Stock"):
-                # Format expiry date if it exists
-                formatted_expiry = expiry.strftime("%d/%m/%Y") if expiry else None
-                
-                new_data = {
-                    "SEGMENT": segment,
-                    "SCRIPT / STOCK": script_stock,
-                    "EXCH": exch,
-                    "EXPIRY": formatted_expiry,
-                    "CE / PE": None if otype == "None" else otype,
-                    "STRIKE": strike,
-                    "BUY / SELL": buy_sell,
-                    "QUANTITY": int(quantity),
-                    "TGT": tgt,
-                    "SL": sl,
-                    "LTP": 0,
-                    "HIGH": 0,
-                    "LOW": 0,
-                    "PCECLOSE": 0,
-                    "ENTRY": float(entry),
-                    "P&L": 0,
-                    "Date/Time": datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S")
-                }
-                
-                # Create a new DataFrame with explicit dtypes
-                new_row = pd.DataFrame([new_data], columns=st.session_state.data.columns).astype({
-                    "SEGMENT": str,
-                    "SCRIPT / STOCK": str,
-                    "EXCH": str,
-                    "EXPIRY": str,
-                    "CE / PE": str,
-                    "STRIKE": float,
-                    "BUY / SELL": str,
-                    "QUANTITY": int,
-                    "TGT": float,
-                    "SL": float,
-                    "LTP": float,
-                    "HIGH": float,
-                    "LOW": float,
-                    "PCECLOSE": float,
-                    "ENTRY": float,
-                    "P&L": float,
-                    "Date/Time": str
-                })
-                
-                st.session_state.data = pd.concat([
-                    st.session_state.data,
-                    new_row
-                ], ignore_index=True)
-
-    def display_data(self):
-        # Move the display above the tabs
-        st.subheader("Current Entries")
-        
-        # Create a styled dataframe
-        def color_pnl(val):
+    def update_market_data(self):
+        """Update market data for all rows in the session state."""
+        for idx, row in st.session_state.data.iterrows():
             try:
-                val = float(val)
-                if val < 0:
-                    return 'color: red'
-                elif val > 0:
-                    return 'color: green'
-                return ''  # No color for zero values
-            except:
-                return ''  # No color for non-numeric values
-        
-        # Format numeric columns to 2 decimal places and apply P&L coloring
-        styled_df = st.session_state.data.style\
-            .format({
-                'LTP': '{:.2f}',
-                'HIGH': '{:.2f}',
-                'LOW': '{:.2f}',
-                'PCECLOSE': '{:.2f}',
-                'ENTRY': '{:.2f}',
-                'P&L': '{:.2f}',
-                'TGT': '{:.2f}',
-                'SL': '{:.2f}',
-                'STRIKE': '{:.2f}'
-            })\
-            .map(color_pnl, subset=['P&L'])
-        
-        st.dataframe(
-            styled_df,
-            use_container_width=True,
-            hide_index=True
-        )
+                # Process each row and get updated data
+                updated_data = self.process_row(row, idx)
 
-def update_market_data(self):
-    """Update market data for all rows in the session state."""
-    for idx, row in st.session_state.data.iterrows():
+                # Update the session state if new data is available
+                if updated_data:
+                    for key, value in updated_data.items():
+                        if key != 'index':  # Avoid updating the index column
+                            st.session_state.data.at[idx, key] = value
+                else:
+                    print(f"No updates for row {idx}: {row['SCRIPT / STOCK']}")
+
+            except Exception as e:
+                # Log errors for debugging
+                print(f"Error updating row {idx} ({row['SCRIPT / STOCK']}): {e}")
+
+    def process_row(self, row, index):
+        """Process a single row to fetch live data and calculate updates."""
         try:
-            # Process each row and get updated data
-            updated_data = self.process_row(row, idx)
-            
-            # Update the session state if new data is available
-            if updated_data:
-                for key, value in updated_data.items():
-                    if key != 'index':  # Avoid updating the index column
-                        st.session_state.data.at[idx, key] = value
+            # Check if this row is already stopped
+            if index in self.stopped_rows:
+                print(f"Row {index} is already stopped, returning stored values")
+                return self.stopped_rows[index]
+
+            now = datetime.now(ist)
+
+            # Get essential values with proper type conversion
+            entry_price = float(row["ENTRY"])
+            quantity = int(row["QUANTITY"])
+            buy_sell = str(row["BUY / SELL"]).strip().upper()
+            target = float(row["TGT"]) if row["TGT"] and float(row["TGT"]) > 0 else None
+            stop_loss = float(row["SL"]) if row["SL"] and float(row["SL"]) > 0 else None
+
+            # Fetch the scrip and live data
+            scrip = get_scrip(
+                str(row["SEGMENT"]).strip().upper(),
+                str(row["EXCH"]).strip().upper(),
+                str(row["SCRIPT / STOCK"]).strip().upper(),
+                row["EXPIRY"] if pd.notna(row["EXPIRY"]) else None,
+                str(row["CE / PE"]).strip().upper() if pd.notna(row["CE / PE"]) else None,
+                float(row["STRIKE"]) if pd.notna(row["STRIKE"]) else None
+            )
+
+            if not scrip:
+                print(f"Scrip not found for row {index}: {row['SCRIPT / STOCK']}")
+                return self.get_default_result(now, entry_price, quantity)
+
+            token = scrip.split("|")[-1]
+            live_data = fetch_live_data(token, row["EXCH"])
+
+            if not live_data:
+                print(f"No live data for row {index}: {row['SCRIPT / STOCK']}")
+                return self.get_default_result(now, entry_price, quantity)
+
+            LTP = float(live_data["LTP"])
+
+            # Calculate P&L if we have valid entry price
+            if LTP > 0 and entry_price > 0:
+                pnl = round((LTP - entry_price) * quantity, 2) if buy_sell == "BUY" else round((entry_price - LTP) * quantity, 2)
             else:
-                print(f"No updates for row {idx}: {row['SCRIPT / STOCK']}")
-        
+                pnl = 0
+
+            # Check target/stop-loss conditions
+            if LTP > 0:  # Only need valid LTP to check targets
+                if buy_sell == "BUY":
+                    if (target is not None and LTP >= target) or (stop_loss is not None and LTP <= stop_loss):
+                        print(f"Row {index}: BUY {'Target' if target and LTP >= target else 'Stop-loss'} hit - LTP: {LTP}")
+                        result = self.create_result(now, live_data, entry_price, quantity, pnl, LTP)
+                        self.stopped_rows[index] = result
+                        return result
+                else:  # SELL
+                    if (target is not None and LTP <= target) or (stop_loss is not None and LTP >= stop_loss):
+                        print(f"Row {index}: SELL {'Target' if target and LTP <= target else 'Stop-loss'} hit - LTP: {LTP}")
+                        result = self.create_result(now, live_data, entry_price, quantity, pnl, LTP)
+                        self.stopped_rows[index] = result
+                        return result
+
+            # Return updated data if no conditions are met
+            return self.create_result(now, live_data, entry_price, quantity, pnl, LTP)
+
         except Exception as e:
-            # Log errors for debugging
-            print(f"Error updating row {idx} ({row['SCRIPT / STOCK']}): {e}")
+            print(f"Error processing row {index}: {e}")
+            return None
 
-def process_row(self, row, index):
-    """Process a single row to fetch live data and calculate updates."""
-    try:
-        # Check if this row is already stopped
-        if index in self.stopped_rows:
-            print(f"Row {index} is already stopped, returning stored values")
-            return self.stopped_rows[index]
-
-        now = datetime.now(ist)
-        
-        # Get essential values with proper type conversion
-        entry_price = float(row["ENTRY"])
-        quantity = int(row["QUANTITY"])
-        buy_sell = str(row["BUY / SELL"]).strip().upper()
-        target = float(row["TGT"]) if row["TGT"] and float(row["TGT"]) > 0 else None
-        stop_loss = float(row["SL"]) if row["SL"] and float(row["SL"]) > 0 else None
-        
-        # Fetch the scrip and live data
-        scrip = get_scrip(
-            str(row["SEGMENT"]).strip().upper(),
-            str(row["EXCH"]).strip().upper(),
-            str(row["SCRIPT / STOCK"]).strip().upper(),
-            row["EXPIRY"] if pd.notna(row["EXPIRY"]) else None,
-            str(row["CE / PE"]).strip().upper() if pd.notna(row["CE / PE"]) else None,
-            float(row["STRIKE"]) if pd.notna(row["STRIKE"]) else None
-        )
-        
-        if not scrip:
-            print(f"Scrip not found for row {index}: {row['SCRIPT / STOCK']}")
-            return self.get_default_result(now, entry_price, quantity)
-
-        token = scrip.split("|")[-1]
-        live_data = fetch_live_data(token, row["EXCH"])
-        
-        if not live_data:
-            print(f"No live data for row {index}: {row['SCRIPT / STOCK']}")
-            return self.get_default_result(now, entry_price, quantity)
-
-        LTP = float(live_data["LTP"])
-        
-        # Calculate P&L if we have valid entry price
-        if LTP > 0 and entry_price > 0:
-            pnl = round((LTP - entry_price) * quantity, 2) if buy_sell == "BUY" else round((entry_price - LTP) * quantity, 2)
-        else:
-            pnl = 0
-
-        # Check target/stop-loss conditions
-        if LTP > 0:  # Only need valid LTP to check targets
-            if buy_sell == "BUY":
-                if (target is not None and LTP >= target) or (stop_loss is not None and LTP <= stop_loss):
-                    print(f"Row {index}: BUY {'Target' if target and LTP >= target else 'Stop-loss'} hit - LTP: {LTP}")
-                    result = self.create_result(now, live_data, entry_price, quantity, pnl, LTP)
-                    self.stopped_rows[index] = result
-                    return result
-            else:  # SELL
-                if (target is not None and LTP <= target) or (stop_loss is not None and LTP >= stop_loss):
-                    print(f"Row {index}: SELL {'Target' if target and LTP <= target else 'Stop-loss'} hit - LTP: {LTP}")
-                    result = self.create_result(now, live_data, entry_price, quantity, pnl, LTP)
-                    self.stopped_rows[index] = result
-                    return result
-
-        # Return updated data if no conditions are met
-        return self.create_result(now, live_data, entry_price, quantity, pnl, LTP)
-
-    except Exception as e:
-        print(f"Error processing row {index}: {e}")
-        return None
-        
     def get_default_result(self, now, entry_price, quantity):
+        """Return default values when live data is unavailable."""
         return {
-            "Date/Time": now.strftime("%Y-%m-%d %H:%M:%S"),
             "LTP": 0,
             "HIGH": 0,
             "LOW": 0,
             "PCECLOSE": 0,
-            "ENTRY": entry_price,
-            "QUANTITY": quantity,
-            "P&L": 0
+            "P &L": 0,
+            "Date/Time": now.strftime("%Y-%m-%d %H:%M:%S")
         }
 
     def create_result(self, now, live_data, entry_price, quantity, pnl, LTP):
+        """Create a dictionary of updated values for a row."""
         return {
-            "Date/Time": now.strftime("%Y-%m-%d %H:%M:%S"),
             "LTP": LTP,
             "HIGH": live_data["HIGH"],
             "LOW": live_data["LOW"],
             "PCECLOSE": live_data["PCECLOSE"],
-            "ENTRY": entry_price,
-            "QUANTITY": quantity,
-            "P&L": pnl
+            "P &L": pnl,
+            "Date/Time": now.strftime("%Y-%m-%d %H:%M:%S")
         }
-
     def update_row_form(self, row_index):
         with st.form("update_stock_form"):
             row_data = st.session_state.data.iloc[row_index]
