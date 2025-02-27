@@ -51,21 +51,7 @@ class MarketData:
         with open(self.LAST_UPDATE_FILE, "w") as f:
             f.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
-    def load_exchange_data(self):
-        """Load exchange data from downloaded symbol files"""
-        try:
-            self.exchange_dfs = {}
-            for exchange, filename in self.SYMBOL_FILES.items():
-                file_path = os.path.join(self.FILES_DIR, filename)
-                if os.path.exists(file_path):
-                    self.exchange_dfs[exchange] = pd.read_csv(file_path)
-                    print(f"{exchange} data loaded successfully.")
-                else:
-                    print(f"File {filename} not found, skipping {exchange} data.")
 
-        except Exception as e:
-            print(f"Error loading exchange data: {e}")
-            raise
 
     def update_github_repo(self):
         """Commits and pushes updated files to GitHub"""
