@@ -32,7 +32,7 @@ def signal_handler(signum, frame):
     print("Shutting down gracefully...")
     sys.exit(0)
 
-@st.cache_resource
+
 def login(name):
     users = pd.read_csv(f'https://docs.google.com/spreadsheets/d/1jdmLEIr2AWoUD0MEPu8YsRt8Ty6J2pk-qIN0uSXveZY/gviz/tq?tqx=out:csv&sheet=Sheet1',index_col='name')
     user = users.loc[name]
@@ -82,7 +82,6 @@ class MarketData:
             raise
 
 
-@st.cache_resource
 def initialize_market_data():
     market_data = MarketData()
     market_data.load_exchange_data()
