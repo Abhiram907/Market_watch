@@ -34,48 +34,19 @@ def signal_handler(signum, frame):
 
 @st.cache_resource
 def login(name):
-    try:
-        users = pd.read_csv(f'https://docs.google.com/spreadsheets/d/1jdmLEIr2AWoUD0MEPu8YsRt8Ty6J2pk-qIN0uSXveZY/gviz/tq?tqx=out:csv&sheet=Sheet1',index_col='name')
-        user = users.loc[name]
-        totp = pyotp.TOTP(user.fa2)
-        api = ShoonyaApiPy()
-        ret = api.login(userid=user.uid, password=user.pwd, twoFA=totp.now(), 
-                       vendor_code=f'{user.uid}_U', api_secret=user.api_key, imei='abc1234')
-        if ret['susertoken']:
-            return api, True  # Return both api and success status
-        return None, False
-    except KeyError:
-        return None, "not_found"  # Special case for user not found
-    except Exception as e:
-        return None, False
-
-# Initialize session state for login status if it doesn't exist
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
-
-# Only show login input if not logged in
-if not st.session_state.logged_in:
-    user_name = st.text_input("Enter your account name:", key="user_name")
-    if user_name:  # Only attempt login if user has entered a name
-        api, login_status = login(user_name)
-        if login_status == "not_found":
-            st.error("User does not exist. Please check your account name.")
-            st.stop()
-        elif login_status:
-            st.session_state.logged_in = True
-            st.session_state.api = api
-            st.success("Login successful!")
-            st.rerun()  # Refresh the page to hide login section
-        else:
-            st.error("Login failed. Please try again.")
-            st.stop()
+    users = pd.read_csv(f'https://docs.google.com/spreadsheets/d/1jdmLEIr2AWoUD0MEPu8YsRt8Ty6J2pk-qIN0uSXveZY/gviz/tq?tqx=out:csv&sheet=Sheet1',index_col='name')
+    user = users.loc[name]
+    totp = pyotp.TOTP(user.fa2)
+    api = ShoonyaApiPy()
+    ret = api.login(userid=user.uid, password=user.pwd, twoFA=totp.now(), 
+                   vendor_code=f'{user.uid}_U', api_secret=user.api_key, imei='abc1234')
+    if ret['susertoken']:
+        st.success('Login successful')
     else:
-        st.warning("Please enter your account name to login")
-        st.stop()
+        st.error('Login failed')
+    return api
 
-# Use the stored API instance after successful login
-api = st.session_state.api if st.session_state.logged_in else None
-
+api = login('pavan')
 # Define the desired timezone (e.g., IST)
 ist = pytz.timezone('Asia/Kolkata')
 
@@ -522,7 +493,7 @@ def get_token(exchange, scrip):
         print(f"Error fetching token for {scrip}: {e}")
     return None
 
-
+@st.cache_data
 def fetch_live_data(token, exchange):
     try:
         token = int(token)
