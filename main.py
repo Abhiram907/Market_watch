@@ -252,17 +252,12 @@ class StreamlitUI:
         )
 
     def update_market_data(self):
-        updated_rows = []  # Collect updated rows
         for idx, row in st.session_state.data.iterrows():
             updated_data = self.process_row(row, idx)
             if updated_data:
-                updated_rows.append((idx, updated_data))  # Store index and updated data
-
-        # Update all rows in one go
-        for idx, data in updated_rows:
-            for key, value in data.items():
-                if key != 'index':
-                    st.session_state.data.at[idx, key] = value
+                for key, value in updated_data.items():
+                    if key != 'index':
+                        st.session_state.data.at[idx, key] = value
 
     def process_row(self, row, index):
         try:
