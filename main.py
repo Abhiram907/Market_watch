@@ -321,6 +321,17 @@ class StreamlitUI:
                         self.stopped_rows[index] = result
                         return result
 
+            # Ensure that the live data is fetched and updated correctly
+            live_data = fetch_live_data(token, row["EXCH"])
+            
+            if live_data:  # Check if live_data is not None
+                LTP = float(live_data["LTP"])
+                # Update the DataFrame with the fetched live data
+                st.session_state.data.at[index, "LTP"] = LTP
+                st.session_state.data.at[index, "HIGH"] = float(live_data["HIGH"])
+                st.session_state.data.at[index, "LOW"] = float(live_data["LOW"])
+                st.session_state.data.at[index, "PCECLOSE"] = float(live_data["PCECLOSE"])
+            
             return self.create_result(now, live_data, entry_price, quantity, pnl, LTP)
 
         except Exception as e:
