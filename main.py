@@ -19,6 +19,8 @@ import subprocess
 import pytz
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
+import asyncio  # Add asyncio import
+import aiohttp  # Add aiohttp import
 
 # Move page config to top level, before any other Streamlit commands
 st.set_page_config(
@@ -327,15 +329,21 @@ class StreamlitUI:
             hide_index=True
         )
 
-    def update_market_data(self):
+    async def update_market_data(self):
+        tasks = []  # Create a list to hold tasks
         for idx, row in st.session_state.user_sessions[self.current_user]['data'].iterrows():
-            updated_data = self.process_row(row, idx)
+            tasks.append(self.process_row(row, idx))  # Append the coroutine to the tasks list
+        
+        results = await asyncio.gather(*tasks)  # Run all tasks concurrently
+        
+        # Update the DataFrame with results
+        for idx, updated_data in enumerate(results):
             if updated_data:
                 for key, value in updated_data.items():
                     if key != 'index':
                         st.session_state.user_sessions[self.current_user]['data'].at[idx, key] = value
 
-    def process_row(self, row, index):
+    async def process_row(self, row, index):
         try:
             # Check if this row is already stopped
             if index in self.stopped_rows:
@@ -366,7 +374,7 @@ class StreamlitUI:
                 return self.get_default_result(now, entry_price, quantity)
 
             token = scrip.split("|")[-1]
-            live_data = fetch_live_data(token, row["EXCH"])
+            live_data = await fetch_live_data(token, row["EXCH"])
             
             if not live_data:
                 return self.get_default_result(now, entry_price, quantity)
@@ -407,7 +415,6 @@ class StreamlitUI:
                 "P&L": pnl
             }
 
-
         except Exception as e:
             print(f"Error processing row {index}: {e}")
             return None
@@ -423,7 +430,6 @@ class StreamlitUI:
             "QUANTITY": quantity,
             "P&L": 0
         }
-
 
     def update_row_form(self, row_index):
         with st.form("update_stock_form"):
@@ -568,10 +574,12 @@ def get_token(exchange, scrip):
     return None
 
 
-def fetch_live_data(token, exchange):
+async def fetch_live_data(token, exchange):
     try:
         token = int(token)
-        quote = api.get_quotes(exchange=exchange, token=str(token))
+        # Use asyncio.to_thread to run the synchronous get_quotes in a separate thread
+        quote = await asyncio.to_thread(api.get_quotes, exchange=exchange, token=str(token))
+        
         if quote:
             live_data = {
                 "LTP": float(quote.get('lp', 0)),
@@ -594,7 +602,7 @@ def fetch_live_data(token, exchange):
 def main():
     ui = StreamlitUI()
     ui.display_data()  # Move display_data call before the tabs
-    ui.update_market_data()
+    asyncio.run(ui.update_market_data())  # Run the async function
 
 if __name__ == "__main__":
     main()
