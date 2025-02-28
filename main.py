@@ -32,15 +32,26 @@ def signal_handler(signum, frame):
     print("Shutting down gracefully...")
     sys.exit(0)
 
+@st.cache_data
+def load_users_data():
+    """Load user data from a CSV file."""
+    users = pd.read_csv('https://docs.google.com/spreadsheets/d/1jdmLEIr2AWoUD0MEPu8YsRt8Ty6J2pk-qIN0uSXveZY/gviz/tq?tqx=out:csv&sheet=Sheet1', index_col='name')
+    return users
+
 @st.cache_resource
+def initialize_api():
+    """Initialize the API connection."""
+    api = ShoonyaApiPy()
+    return api
+
 def login(name):
     try:
-        users = pd.read_csv(f'https://docs.google.com/spreadsheets/d/1jdmLEIr2AWoUD0MEPu8YsRt8Ty6J2pk-qIN0uSXveZY/gviz/tq?tqx=out:csv&sheet=Sheet1',index_col='name')
+        users = load_users_data()  # Use cached user data
         user = users.loc[name]
         totp = pyotp.TOTP(user.fa2)
-        api = ShoonyaApiPy()
+        api = initialize_api()  # Use cached API instance
         ret = api.login(userid=user.uid, password=user.pwd, twoFA=totp.now(), 
-                       vendor_code=f'{user.uid}_U', api_secret=user.api_key, imei='abc1234')
+                        vendor_code=f'{user.uid}_U', api_secret=user.api_key, imei='abc1234')
         if ret['susertoken']:
             return api, True  # Return both api and success status
         return None, False
@@ -146,20 +157,14 @@ class MarketData:
             raise
 
 
-@st.cache_resource
+@st.cache_data
 def initialize_market_data():
     market_data = MarketData()
-    market_data.load_exchange_data()
+    market_data.load_exchange_data()  # Load exchange data
     return market_data, market_data.exchange_dfs
 
-# Initialize market data only once
-if 'exchange_dfs' not in st.session_state:
-    market_data, st.session_state.exchange_dfs = initialize_market_data()
-else:
-    market_data = MarketData()  # Reuse the existing market_data instance
-
-# Auto refresh every 1 second (1000 milliseconds)
-st_autorefresh(interval=1000, key="datarefresh")
+# Replace the current initialization with:
+market_data, exchange_dfs = initialize_market_data()
 
 class StreamlitUI:
     def __init__(self):
@@ -170,6 +175,9 @@ class StreamlitUI:
         
     def setup_streamlit(self):
         st.title("Market Data Monitor")
+        
+        # Auto refresh every 1 second (1000 milliseconds)
+        st_autorefresh(interval=1000, key="datarefresh")
         
         # Use user-specific session data
         if 'data' not in st.session_state.user_sessions[self.current_user]:
@@ -323,12 +331,9 @@ class StreamlitUI:
         for idx, row in st.session_state.user_sessions[self.current_user]['data'].iterrows():
             updated_data = self.process_row(row, idx)
             if updated_data:
-                # Update only the specified fields
-                st.session_state.user_sessions[self.current_user]['data'].at[idx, 'LTP'] = updated_data['LTP']
-                st.session_state.user_sessions[self.current_user]['data'].at[idx, 'HIGH'] = updated_data['HIGH']
-                st.session_state.user_sessions[self.current_user]['data'].at[idx, 'LOW'] = updated_data['LOW']
-                st.session_state.user_sessions[self.current_user]['data'].at[idx, 'PCECLOSE'] = updated_data['PCECLOSE']
-                st.session_state.user_sessions[self.current_user]['data'].at[idx, 'Date/Time'] = updated_data['Date/Time']
+                for key, value in updated_data.items():
+                    if key != 'index':
+                        st.session_state.user_sessions[self.current_user]['data'].at[idx, key] = value
 
     def process_row(self, row, index):
         try:
@@ -391,8 +396,17 @@ class StreamlitUI:
                         result = self.create_result(now, live_data, entry_price, quantity, pnl, LTP)
                         self.stopped_rows[index] = result
                         return result
+            return {
+                "Date/Time": now.strftime("%Y-%m-%d %H:%M:%S"),
+                "LTP": LTP,
+                "HIGH": live_data["HIGH"],
+                "LOW": live_data["LOW"],
+                "PCECLOSE": live_data["PCECLOSE"],
+                "ENTRY": entry_price,
+                "QUANTITY": quantity,
+                "P&L": pnl
+            }
 
-            return self.create_result(now, live_data, entry_price, quantity, pnl, LTP)
 
         except Exception as e:
             print(f"Error processing row {index}: {e}")
@@ -410,17 +424,6 @@ class StreamlitUI:
             "P&L": 0
         }
 
-    def create_result(self, now, live_data, entry_price, quantity, pnl, LTP):
-        return {
-            "Date/Time": now.strftime("%Y-%m-%d %H:%M:%S"),
-            "LTP": LTP,
-            "HIGH": live_data["HIGH"],
-            "LOW": live_data["LOW"],
-            "PCECLOSE": live_data["PCECLOSE"],
-            "ENTRY": entry_price,
-            "QUANTITY": quantity,
-            "P&L": pnl
-        }
 
     def update_row_form(self, row_index):
         with st.form("update_stock_form"):
@@ -556,7 +559,7 @@ def get_scrip(segment, exchange, symbol, expiry=None, otype=None, strike=None):
 @st.cache_data
 def get_token(exchange, scrip):
     try:
-        df = st.session_state.exchange_dfs.get(exchange.upper())
+        df = exchange_dfs.get(exchange.upper())
         if df is not None:
             tokens = df[df['TradingSymbol'] == scrip]['Token'].values
             return int(tokens[0]) if len(tokens) > 0 else None
