@@ -9,3 +9,4 @@ streamlit
 datetime
 wget
 streamlit-autorefresh
+aiohttp
