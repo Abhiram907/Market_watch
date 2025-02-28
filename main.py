@@ -34,19 +34,83 @@ def signal_handler(signum, frame):
 
 @st.cache_resource
 def login(name):
-    users = pd.read_csv(f'https://docs.google.com/spreadsheets/d/1jdmLEIr2AWoUD0MEPu8YsRt8Ty6J2pk-qIN0uSXveZY/gviz/tq?tqx=out:csv&sheet=Sheet1',index_col='name')
-    user = users.loc[name]
-    totp = pyotp.TOTP(user.fa2)
-    api = ShoonyaApiPy()
-    ret = api.login(userid=user.uid, password=user.pwd, twoFA=totp.now(), 
-                   vendor_code=f'{user.uid}_U', api_secret=user.api_key, imei='abc1234')
-    if ret['susertoken']:
-        st.success('Login successful')
-    else:
-        st.error('Login failed')
-    return api
+    try:
+        users = pd.read_csv(f'https://docs.google.com/spreadsheets/d/1jdmLEIr2AWoUD0MEPu8YsRt8Ty6J2pk-qIN0uSXveZY/gviz/tq?tqx=out:csv&sheet=Sheet1',index_col='name')
+        user = users.loc[name]
+        totp = pyotp.TOTP(user.fa2)
+        api = ShoonyaApiPy()
+        ret = api.login(userid=user.uid, password=user.pwd, twoFA=totp.now(), 
+                       vendor_code=f'{user.uid}_U', api_secret=user.api_key, imei='abc1234')
+        if ret['susertoken']:
+            return api, True  # Return both api and success status
+        return None, False
+    except KeyError:
+        return None, "not_found"  # Special case for user not found
+    except Exception as e:
+        return None, False
 
-api = login('pavan')
+# Modify the session state initialization to be user-specific
+if 'user_sessions' not in st.session_state:
+    st.session_state.user_sessions = {}
+
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.current_user = None
+
+# Only show login input if not logged in
+if not st.session_state.logged_in:
+    user_name = st.text_input("Enter your account name:", key="user_name")
+    if user_name:  # Only attempt login if user has entered a name
+        api, login_status = login(user_name)
+        if login_status == "not_found":
+            st.error("User does not exist. Please check your account name.")
+            st.stop()
+        elif login_status:
+            st.session_state.logged_in = True
+            st.session_state.current_user = user_name
+            # Initialize user-specific session data
+            if user_name not in st.session_state.user_sessions:
+                st.session_state.user_sessions[user_name] = {
+                    'api': api,
+                    'data': pd.DataFrame({
+                        "SEGMENT": pd.Series(dtype='str'),
+                        "SCRIPT / STOCK": pd.Series(dtype='str'),
+                        "EXCH": pd.Series(dtype='str'),
+                        "EXPIRY": pd.Series(dtype='str'),
+                        "CE / PE": pd.Series(dtype='str'),
+                        "STRIKE": pd.Series(dtype='float64'),
+                        "BUY / SELL": pd.Series(dtype='str'),
+                        "QUANTITY": pd.Series(dtype='int64'),
+                        "TGT": pd.Series(dtype='float64'),
+                        "SL": pd.Series(dtype='float64'),
+                        "LTP": pd.Series(dtype='float64'),
+                        "HIGH": pd.Series(dtype='float64'),
+                        "LOW": pd.Series(dtype='float64'),
+                        "PCECLOSE": pd.Series(dtype='float64'),
+                        "ENTRY": pd.Series(dtype='float64'),
+                        "P&L": pd.Series(dtype='float64'),
+                        "Date/Time": pd.Series(dtype='str')
+                    })
+                }
+            st.success("Login successful!")
+            st.rerun()
+        else:
+            st.error("Login failed. Please try again.")
+            st.stop()
+    else:
+        st.warning("Please enter your account name to login")
+        st.stop()
+
+# Use the stored API instance after successful login
+if st.session_state.logged_in:
+    api = st.session_state.user_sessions[st.session_state.current_user]['api']
+    
+    # Add logout button
+    if st.sidebar.button("Logout"):
+        st.session_state.logged_in = False
+        st.session_state.current_user = None
+        st.rerun()
+
 # Define the desired timezone (e.g., IST)
 ist = pytz.timezone('Asia/Kolkata')
 
@@ -94,7 +158,8 @@ market_data, exchange_dfs = initialize_market_data()
 class StreamlitUI:
     def __init__(self):
         self.stopped_rows = {}
-        self.market_data = market_data  # Use the cached instance
+        self.market_data = market_data
+        self.current_user = st.session_state.current_user
         self.setup_streamlit()
         
     def setup_streamlit(self):
@@ -103,9 +168,9 @@ class StreamlitUI:
         # Auto refresh every 1 second (1000 milliseconds)
         st_autorefresh(interval=1000, key="datarefresh")
         
-        # Initialize session state for storing data with explicit dtypes
-        if 'data' not in st.session_state:
-            st.session_state.data = pd.DataFrame({
+        # Use user-specific session data
+        if 'data' not in st.session_state.user_sessions[self.current_user]:
+            st.session_state.user_sessions[self.current_user]['data'] = pd.DataFrame({
                 "SEGMENT": pd.Series(dtype='str'),
                 "SCRIPT / STOCK": pd.Series(dtype='str'),
                 "EXCH": pd.Series(dtype='str'),
@@ -132,10 +197,10 @@ class StreamlitUI:
             self.add_new_row()
             
         with tab2:
-            if not st.session_state.data.empty:
+            if not st.session_state.user_sessions[self.current_user]['data'].empty:
                 # Create a list of row descriptions for the dropdown
                 row_options = [f"Row {i+1}: {row['SCRIPT / STOCK']} - {row['SEGMENT']} - {row['EXCH']}" 
-                             for i, row in st.session_state.data.iterrows()]
+                             for i, row in st.session_state.user_sessions[self.current_user]['data'].iterrows()]
                 selected_row = st.selectbox("Select row to update:", row_options)
                 if selected_row:
                     # Extract row index from selection
@@ -189,7 +254,7 @@ class StreamlitUI:
                 }
                 
                 # Create a new DataFrame with explicit dtypes
-                new_row = pd.DataFrame([new_data], columns=st.session_state.data.columns).astype({
+                new_row = pd.DataFrame([new_data], columns=st.session_state.user_sessions[self.current_user]['data'].columns).astype({
                     "SEGMENT": str,
                     "SCRIPT / STOCK": str,
                     "EXCH": str,
@@ -209,8 +274,8 @@ class StreamlitUI:
                     "Date/Time": str
                 })
                 
-                st.session_state.data = pd.concat([
-                    st.session_state.data,
+                st.session_state.user_sessions[self.current_user]['data'] = pd.concat([
+                    st.session_state.user_sessions[self.current_user]['data'],
                     new_row
                 ], ignore_index=True)
 
@@ -231,7 +296,7 @@ class StreamlitUI:
                 return ''  # No color for non-numeric values
         
         # Format numeric columns to 2 decimal places and apply P&L coloring
-        styled_df = st.session_state.data.style\
+        styled_df = st.session_state.user_sessions[self.current_user]['data'].style\
             .format({
                 'LTP': '{:.2f}',
                 'HIGH': '{:.2f}',
@@ -252,12 +317,12 @@ class StreamlitUI:
         )
 
     def update_market_data(self):
-        for idx, row in st.session_state.data.iterrows():
+        for idx, row in st.session_state.user_sessions[self.current_user]['data'].iterrows():
             updated_data = self.process_row(row, idx)
             if updated_data:
                 for key, value in updated_data.items():
                     if key != 'index':
-                        st.session_state.data.at[idx, key] = value
+                        st.session_state.user_sessions[self.current_user]['data'].at[idx, key] = value
 
     def process_row(self, row, index):
         try:
@@ -321,17 +386,6 @@ class StreamlitUI:
                         self.stopped_rows[index] = result
                         return result
 
-            # Ensure that the live data is fetched and updated correctly
-            live_data = fetch_live_data(token, row["EXCH"])
-            
-            if live_data:  # Check if live_data is not None
-                LTP = float(live_data["LTP"])
-                # Update the DataFrame with the fetched live data
-                st.session_state.data.at[index, "LTP"] = LTP
-                st.session_state.data.at[index, "HIGH"] = float(live_data["HIGH"])
-                st.session_state.data.at[index, "LOW"] = float(live_data["LOW"])
-                st.session_state.data.at[index, "PCECLOSE"] = float(live_data["PCECLOSE"])
-            
             return self.create_result(now, live_data, entry_price, quantity, pnl, LTP)
 
         except Exception as e:
@@ -364,7 +418,7 @@ class StreamlitUI:
 
     def update_row_form(self, row_index):
         with st.form("update_stock_form"):
-            row_data = st.session_state.data.iloc[row_index]
+            row_data = st.session_state.user_sessions[self.current_user]['data'].iloc[row_index]
             
             # Add delete button at the top
             cols_top = st.columns([8, 2])  # 80-20 split for layout
@@ -406,7 +460,7 @@ class StreamlitUI:
             
             if delete_row:
                 # Remove the row from the DataFrame
-                st.session_state.data = st.session_state.data.drop(index=row_index).reset_index(drop=True)
+                st.session_state.user_sessions[self.current_user]['data'] = st.session_state.user_sessions[self.current_user]['data'].drop(index=row_index).reset_index(drop=True)
                 st.success("Row deleted successfully!")
                 st.rerun()  # Rerun the app to refresh the UI
                 
@@ -432,7 +486,7 @@ class StreamlitUI:
                 }
                 
                 # Update the DataFrame
-                st.session_state.data.iloc[row_index] = updated_data
+                st.session_state.user_sessions[self.current_user]['data'].iloc[row_index] = updated_data
                 st.success("Stock updated successfully!")
 
 def normalize_expiry_date(expiry, exchange):
